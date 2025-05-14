@@ -1,0 +1,54 @@
+[0m[[0m[33mwarn[0m] [0m[0m/Users/adityakulthe/Desktop/sh/src/main/scala/org/planx/sh/parsing/hddl/HDDLDomainParser.scala:23:17: non-variable type argument org.planx.sh.problem.DomainTask in type pattern (org.planx.sh.problem.DomainTask, List[org.planx.sh.problem.DomainMethod]) is unchecked since it is eliminated by erasure[0m
+[0m[[0m[33mwarn[0m] [0m[0m        case t: (DomainTask, List[DomainMethod]) => tasks += t[0m
+[0m[[0m[33mwarn[0m] [0m[0m                ^[0m
+[0m[[0m[33mwarn[0m] [0m[0m/Users/adityakulthe/Desktop/sh/src/main/scala/org/planx/sh/parsing/hpdl/HPDLDomainParser.scala:24:17: non-variable type argument org.planx.sh.problem.DomainTask in type pattern (org.planx.sh.problem.DomainTask, List[org.planx.sh.problem.DomainMethod]) is unchecked since it is eliminated by erasure[0m
+[0m[[0m[33mwarn[0m] [0m[0m        case t: (DomainTask, List[DomainMethod]) => tasks.update(t, true)[0m
+[0m[[0m[33mwarn[0m] [0m[0m                ^[0m
+[0m[[0m[33mwarn[0m] [0m[0m/Users/adityakulthe/Desktop/sh/src/main/scala/org/planx/sh/problem/Domain.scala:82:17: fruitless type test: a value of type List[org.planx.sh.problem.Operator] cannot also be a org.planx.sh.problem.Operator[0m
+[0m[[0m[33mwarn[0m] [0m[0m        case o: Operator => o(p.arguments)[0m
+[0m[[0m[33mwarn[0m] [0m[0m                ^[0m
+[0m[[0m[33mwarn[0m] [0m[0m/Users/adityakulthe/Desktop/sh/src/main/scala/org/planx/sh/solving/Expression.scala:27:18: non-variable type argument org.planx.sh.problem.Term in type pattern List[org.planx.sh.problem.Term] is unchecked since it is eliminated by erasure[0m
+[0m[[0m[33mwarn[0m] [0m[0m    case params: List[Term] => Bindable(params)[0m
+[0m[[0m[33mwarn[0m] [0m[0m                 ^[0m
+[0m[[0m[33mwarn[0m] [0m[0m/Users/adityakulthe/Desktop/sh/src/main/scala/org/planx/sh/solving/FunExpression.scala:75:29: non-variable type argument org.planx.sh.problem.Number in type pattern List[org.planx.sh.problem.Number] (the underlying of List[org.planx.sh.problem.Number]) is unchecked since it is eliminated by erasure[0m
+[0m[[0m[33mwarn[0m] [0m[0m      case ("<", arguments: List[Number])   => functionate(arguments, { case (x: Double, y: Double) => x < y })[0m
+[0m[[0m[33mwarn[0m] [0m[0m                            ^[0m
+[0m[[0m[33mwarn[0m] [0m[0m/Users/adityakulthe/Desktop/sh/src/main/scala/org/planx/sh/solving/FunExpression.scala:76:30: non-variable type argument org.planx.sh.problem.Number in type pattern List[org.planx.sh.problem.Number] (the underlying of List[org.planx.sh.problem.Number]) is unchecked since it is eliminated by erasure[0m
+[0m[[0m[33mwarn[0m] [0m[0m      case ("<=", arguments: List[Number])  => functionate(arguments, { case (x: Double, y: Double) => x <= y })[0m
+[0m[[0m[33mwarn[0m] [0m[0m                             ^[0m
+[0m[[0m[33mwarn[0m] [0m[0m/Users/adityakulthe/Desktop/sh/src/main/scala/org/planx/sh/solving/FunExpression.scala:77:29: non-variable type argument org.planx.sh.problem.Number in type pattern List[org.planx.sh.problem.Number] (the underlying of List[org.planx.sh.problem.Number]) is unchecked since it is eliminated by erasure[0m
+[0m[[0m[33mwarn[0m] [0m[0m      case (">", arguments: List[Number])   => functionate(arguments, { case (x: Double, y: Double) => x > y })[0m
+[0m[[0m[33mwarn[0m] [0m[0m                            ^[0m
+[0m[[0m[33mwarn[0m] [0m[0m/Users/adityakulthe/Desktop/sh/src/main/scala/org/planx/sh/solving/FunExpression.scala:78:30: non-variable type argument org.planx.sh.problem.Number in type pattern List[org.planx.sh.problem.Number] (the underlying of List[org.planx.sh.problem.Number]) is unchecked since it is eliminated by erasure[0m
+[0m[[0m[33mwarn[0m] [0m[0m      case (">=", arguments: List[Number])  => functionate(arguments, { case (x: Double, y: Double) => x >= y })[0m
+[0m[[0m[33mwarn[0m] [0m[0m                             ^[0m
+[0m[[0m[33mwarn[0m] [0m[0m/Users/adityakulthe/Desktop/sh/src/main/scala/org/planx/sh/solving/FunExpression.scala:81:34: non-variable type argument org.planx.sh.problem.Term in type pattern List[org.planx.sh.problem.Term] (the underlying of List[org.planx.sh.problem.Term]) is unchecked since it is eliminated by erasure[0m
+[0m[[0m[33mwarn[0m] [0m[0m      case ("member", arguments: List[Term]) => {[0m
+[0m[[0m[33mwarn[0m] [0m[0m                                 ^[0m
+[0m[[0m[33mwarn[0m] [0m[0m/Users/adityakulthe/Desktop/sh/src/main/scala/org/planx/sh/solving/FunExpression.scala:98:29: non-variable type argument org.planx.sh.problem.Number in type pattern List[org.planx.sh.problem.Number] (the underlying of List[org.planx.sh.problem.Number]) is unchecked since it is eliminated by erasure[0m
+[0m[[0m[33mwarn[0m] [0m[0m      case ("+", arguments: List[Number])   => Number(arguments.foldLeft(0.0)((acc, v) => acc + v.n))[0m
+[0m[[0m[33mwarn[0m] [0m[0m                            ^[0m
+[0m[[0m[33mwarn[0m] [0m[0m/Users/adityakulthe/Desktop/sh/src/main/scala/org/planx/sh/solving/FunExpression.scala:99:29: non-variable type argument org.planx.sh.problem.Number in type pattern List[org.planx.sh.problem.Number] (the underlying of List[org.planx.sh.problem.Number]) is unchecked since it is eliminated by erasure[0m
+[0m[[0m[33mwarn[0m] [0m[0m      case ("-", arguments: List[Number])   => Number(arguments.head.n - arguments.tail.foldLeft(0.0)((acc, v) => acc + v.n))[0m
+[0m[[0m[33mwarn[0m] [0m[0m                            ^[0m
+[0m[[0m[33mwarn[0m] [0m[0m/Users/adityakulthe/Desktop/sh/src/main/scala/org/planx/sh/solving/FunExpression.scala:100:29: non-variable type argument org.planx.sh.problem.Number in type pattern List[org.planx.sh.problem.Number] (the underlying of List[org.planx.sh.problem.Number]) is unchecked since it is eliminated by erasure[0m
+[0m[[0m[33mwarn[0m] [0m[0m      case ("*", arguments: List[Number])   => Number(arguments.foldLeft(1.0)((acc, v) => acc * v.n))[0m
+[0m[[0m[33mwarn[0m] [0m[0m                            ^[0m
+[0m[[0m[33mwarn[0m] [0m[0m/Users/adityakulthe/Desktop/sh/src/main/scala/org/planx/sh/solving/FunExpression.scala:101:29: non-variable type argument org.planx.sh.problem.Number in type pattern List[org.planx.sh.problem.Number] (the underlying of List[org.planx.sh.problem.Number]) is unchecked since it is eliminated by erasure[0m
+[0m[[0m[33mwarn[0m] [0m[0m      case ("/", arguments: List[Number])   => Number(arguments.head.n / arguments.tail.foldLeft(1.0)((acc, v) => acc * v.n))[0m
+[0m[[0m[33mwarn[0m] [0m[0m                            ^[0m
+[0m[[0m[33mwarn[0m] [0m[0m/Users/adityakulthe/Desktop/sh/src/main/scala/org/planx/sh/solving/FunExpression.scala:102:29: non-variable type argument org.planx.sh.problem.Number in type pattern List[org.planx.sh.problem.Number] (the underlying of List[org.planx.sh.problem.Number]) is unchecked since it is eliminated by erasure[0m
+[0m[[0m[33mwarn[0m] [0m[0m      case ("^", arguments: List[Number])   => Number(compute(arguments.head.n, arguments.tail))[0m
+[0m[[0m[33mwarn[0m] [0m[0m                            ^[0m
+[0m[[0m[33mwarn[0m] [0m[0m/Users/adityakulthe/Desktop/sh/src/main/scala/org/planx/sh/solving/State.scala:45:32: fruitless type test: a value of type org.planx.sh.problem.Term cannot also be a Symbol[0m
+[0m[[0m[33mwarn[0m] [0m[0m      if !argument.isInstanceOf[Symbol]) {[0m
+[0m[[0m[33mwarn[0m] [0m[0m                               ^[0m
+[0m[[0m[33mwarn[0m] [0m[0m/Users/adityakulthe/Desktop/sh/src/main/scala/org/planx/sh/solving/State.scala:75:32: fruitless type test: a value of type org.planx.sh.problem.Term cannot also be a Symbol[0m
+[0m[[0m[33mwarn[0m] [0m[0m      if !argument.isInstanceOf[Symbol]) {[0m
+[0m[[0m[33mwarn[0m] [0m[0m                               ^[0m
+[0m[[0m[33mwarn[0m] [0m[0m/Users/adityakulthe/Desktop/sh/src/main/scala/org/planx/sh/problem/Domain.scala:80:34: match may not be exhaustive.[0m
+[0m[[0m[33mwarn[0m] [0m[0mIt would fail on the following input: List(_)[0m
+[0m[[0m[33mwarn[0m] [0m[0m      case List() => findOperator(p) match {[0m
+[0m[[0m[33mwarn[0m] [0m[0m                                 ^[0m
+[0m[[0m[33mwarn[0m] [0m[0mthere were 13 feature warnings; re-run with -feature for details[0m
+[0m[[0m[33mwarn[0m] [0m[0m18 warnings found[0m
