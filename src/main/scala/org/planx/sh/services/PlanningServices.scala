@@ -2,6 +2,7 @@ package org.planx.sh.services
 
 import org.planx.sh.parsing.hpdl.{HPDLDomainParser, HPDLProblemParser}
 import org.planx.sh.parsing.hddl.{HDDLDomainParser, HDDLProblemParser}
+import org.planx.sh.parsing.shop2.{SHOP2DomainParser, SHOP2ProblemParser}
 
 import org.planx.sh.problem.Domain
 import org.planx.sh.solution.Plan
@@ -65,6 +66,15 @@ object PlanningServices {
     val plans = PlanGeneration(state, domain.tasks, domain.operators).process(goal, numberOfPlans)
     plans.map(_.mkString("\n")).getOrElse("No valid plan found.")
   }
+  def planSHOP2WithDomainAndProblemStrings(domainStr: String, problemStr: String, numberOfPlans: Int = 1): String = {
+    val domain = SHOP2DomainParser.processDomainStringToObject(domainStr)
+    val problem = SHOP2ProblemParser.processProblemStringToObject(problemStr)
+    val state = problem.state
+    val goal = domain.preprocessGoalTaskList(problem.goalTaskList)
+  
+    val plans = PlanGeneration(state, domain.tasks, domain.operators).process(goal, numberOfPlans)
+    plans.map(_.mkString("\n")).getOrElse("No valid plan found.")
+  }
   
   def checkProvidedProblemInString(problemToBeChecked: String): String = {
     try {
@@ -99,6 +109,23 @@ object PlanningServices {
       case _: RuntimeException => "Failed to parse HDDL domain. Please check the syntax."
     }
   }
+  def checkSHOP2Domain(domainStr: String): String = {
+    try {
+      SHOP2DomainParser.processDomainStringToObject(domainStr)
+      "SHOP2 domain is correctly formulated."
+    } catch {
+      case _: RuntimeException => "Failed to parse SHOP2 domain. Please check the syntax."
+    }
+  }
+  
+  def checkSHOP2Problem(problemStr: String): String = {
+    try {
+      SHOP2ProblemParser.processProblemStringToObject(problemStr)
+      "SHOP2 problem is correctly formulated."
+    } catch {
+      case _: RuntimeException => "Failed to parse SHOP2 problem. Please check the syntax."
+    }
+  }
   
   def planWithGivenDomainAndProblemNameReturnString(domainName: String, problemName: String, numberOfPlans: Int = 1): String = {
     val domain = HPDLDomainParser.processDomainFileToObject(Resources.getDomainPath(domainName))
@@ -116,6 +143,15 @@ object PlanningServices {
   def planHDDLWithStoredDomainAndProblem(domainName: String, problemName: String, numberOfPlans: Int = 1): String = {
     val domain = HDDLDomainParser.processDomainFileToObject(Resources.getDomainPath(domainName))
     val problem = HDDLProblemParser.processProblemFileToObject(Resources.getProblemPath(domainName, problemName))
+    val state = problem.state
+    val goal = domain.preprocessGoalTaskList(problem.goalTaskList)
+  
+    val plans = PlanGeneration(state, domain.tasks, domain.operators).process(goal, numberOfPlans)
+    plans.map(_.mkString("\n")).getOrElse("No valid plan found.")
+  }
+  def planSHOP2WithStoredDomainAndProblem(domainName: String, problemName: String, numberOfPlans: Int = 1): String = {
+    val domain = SHOP2DomainParser.processDomainFileToObject(Resources.getDomainPath(domainName))
+    val problem = SHOP2ProblemParser.processProblemFileToObject(Resources.getProblemPath(domainName, problemName))
     val state = problem.state
     val goal = domain.preprocessGoalTaskList(problem.goalTaskList)
   

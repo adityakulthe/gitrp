@@ -4,6 +4,9 @@
 [0m[[0m[33mwarn[0m] [0m[0m/Users/adityakulthe/Desktop/sh/src/main/scala/org/planx/sh/parsing/hpdl/HPDLDomainParser.scala:24:17: non-variable type argument org.planx.sh.problem.DomainTask in type pattern (org.planx.sh.problem.DomainTask, List[org.planx.sh.problem.DomainMethod]) is unchecked since it is eliminated by erasure[0m
 [0m[[0m[33mwarn[0m] [0m[0m        case t: (DomainTask, List[DomainMethod]) => tasks.update(t, true)[0m
 [0m[[0m[33mwarn[0m] [0m[0m                ^[0m
+[0m[[0m[33mwarn[0m] [0m[0m/Users/adityakulthe/Desktop/sh/src/main/scala/org/planx/sh/parsing/shop2/SHOP2DomainParser.scala:23:17: non-variable type argument org.planx.sh.problem.DomainTask in type pattern (org.planx.sh.problem.DomainTask, List[org.planx.sh.problem.DomainMethod]) is unchecked since it is eliminated by erasure[0m
+[0m[[0m[33mwarn[0m] [0m[0m        case t: (DomainTask, List[DomainMethod]) => tasks += t[0m
+[0m[[0m[33mwarn[0m] [0m[0m                ^[0m
 [0m[[0m[33mwarn[0m] [0m[0m/Users/adityakulthe/Desktop/sh/src/main/scala/org/planx/sh/problem/Domain.scala:82:17: fruitless type test: a value of type List[org.planx.sh.problem.Operator] cannot also be a org.planx.sh.problem.Operator[0m
 [0m[[0m[33mwarn[0m] [0m[0m        case o: Operator => o(p.arguments)[0m
 [0m[[0m[33mwarn[0m] [0m[0m                ^[0m
@@ -50,5 +53,5 @@
 [0m[[0m[33mwarn[0m] [0m[0mIt would fail on the following input: List(_)[0m
 [0m[[0m[33mwarn[0m] [0m[0m      case List() => findOperator(p) match {[0m
 [0m[[0m[33mwarn[0m] [0m[0m                                 ^[0m
-[0m[[0m[33mwarn[0m] [0m[0mthere were 13 feature warnings; re-run with -feature for details[0m
-[0m[[0m[33mwarn[0m] [0m[0m18 warnings found[0m
+[0m[[0m[33mwarn[0m] [0m[0mthere were 14 feature warnings; re-run with -feature for details[0m
+[0m[[0m[33mwarn[0m] [0m[0m19 warnings found[0m
