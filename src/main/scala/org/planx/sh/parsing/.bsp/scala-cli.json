@@ -1,0 +1,20 @@
+{
+  "name": "scala-cli",
+  "argv": [
+    "/Users/adityakulthe/Library/Application Support/Coursier/bin/.scala-cli.aux",
+    "bsp",
+    "--json-options",
+    "/Users/adityakulthe/Downloads/sh/src/main/scala/org/planx/sh/parsing/.scala-build/ide-options-v2.json",
+    "--json-launcher-options",
+    "/Users/adityakulthe/Downloads/sh/src/main/scala/org/planx/sh/parsing/.scala-build/ide-launcher-options.json",
+    "--envs-file",
+    "/Users/adityakulthe/Downloads/sh/src/main/scala/org/planx/sh/parsing/.scala-build/ide-envs.json",
+    "/Users/adityakulthe/Downloads/sh/src/main/scala/org/planx/sh/parsing"
+  ],
+  "version": "1.5.4",
+  "bspVersion": "2.1.1",
+  "languages": [
+    "scala",
+    "java"
+  ]
+}

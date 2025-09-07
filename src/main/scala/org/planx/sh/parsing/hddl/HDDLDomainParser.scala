@@ -1,178 +1,198 @@
 package org.planx.sh.parsing.hddl
 
-import grizzled.slf4j.Logging
 import org.planx.sh.problem._
-import org.planx.sh.solving._
-import org.planx.sh.utility.{DomainRequirements, Messaging}
-
+import org.planx.sh.utility.Messaging
 import java.io.InputStream
-import scala.collection.mutable.{Set => MutableSet}
 import scala.io.Source._
+import grizzled.slf4j.Logging
+import scala.collection.mutable
+import org.planx.sh.solving._
 
-class HDDLDomainParser extends HDDLParser with Logging {
+object HDDLDomainParser extends HDDLParser with Logging {
 
-  domain_parser_on = true
-  var dtypes: List[DomainType] = List()
-
-  lazy val domain = "(" ~> "define" ~> domain_name ~ require_def ~ types_def ~ predicates_def ~ functions_def ~ structure_def <~ ")" ^^ {
-    case dn ~ rd ~ td ~ pd ~ fd ~ structure =>
-      val tasks: MutableSet[(DomainTask, List[DomainMethod])] = MutableSet()
-      val operators: MutableSet[DomainOperator] = MutableSet()
-
-      for (element <- structure) element match {
-        case t: (DomainTask, List[DomainMethod]) => tasks += t
-        case o: DomainOperator => operators += o
-        case _ => // skip unknown
-      }
-
-      Domain(dn, rd, td, pd, fd, operators.toList.reverse, tasks.toList, List())
+  // --- Pluggable Extension Hooks ---
+  private var customHooks: List[Domain => Unit] = List()
+  def registerCustomHook(hook: Domain => Unit): Unit = {
+    customHooks = hook :: customHooks
+  }
+  private def runCustomHooks(domain: Domain): Unit = {
+    customHooks.foreach(hook => hook(domain))
   }
 
-  lazy val domain_name = "(" ~> "domain" ~> name <~ ")"
-
-  lazy val types_def = opt("(" ~> ":types" ~> rep(typed_list) <~ ")") ^^ {
-    case Some(types) =>
-      val all = types.flatten
-      dtypes = createDomainTypes(all, all)
-      dtypes
-    case None => List()
+  // --- Input Validation ---
+  private def validateInput(input: String): Unit = {
+    if (input.trim.isEmpty)
+      throw new RuntimeException(Messaging.printPlanningSystemMessage + "Domain input is empty.")
+    val openParens = input.count(_ == '(')
+    val closeParens = input.count(_ == ')')
+    if (openParens != closeParens)
+      throw new RuntimeException(Messaging.printPlanningSystemMessage + s"Unbalanced parentheses: $openParens '(' and $closeParens ')'.")
+    if (!input.contains("(define"))
+      throw new RuntimeException(Messaging.printPlanningSystemMessage + "Missing (define ...) block in domain.")
   }
 
-  lazy val typed_list = rep1(name) ~ opt("-" ~> name) ^^ {
-    case names ~ Some(parent) => names.map(n => DomainType(n, parent))
-    case names ~ None         => names.map(n => DomainType(n, DomainRequirements.NOTYPE))
-  }
-
-  lazy val predicates_def = opt("(" ~> ":predicates" ~> rep1(atomic_formula_skeleton) <~ ")") ^^ {
-    case Some(preds) => dpredicates = preds; preds
-    case None => List()
-  }
-
-  lazy val atomic_formula_skeleton = "(" ~> predicate_name ~ predicate_args <~ ")" ^^ {
-    case pn ~ args =>
-      val flatArgs = args.flatten
-      val argTypes = flatArgs.zipWithIndex.map { case (arg, idx) => (idx, arg._type) }.toSet
-      Predicate(pn, flatArgs, scala.collection.mutable.Set(argTypes.toSeq: _*))
-  }
-
-  lazy val predicate_args = rep(typed_list_variable)
-
-  lazy val typed_list_variable = rep1(variable) ~ opt("-" ~> name) ^^ {
-    case vars ~ Some(st) => vars.map(v => { val temp = Var(Symbol(v), st); dvars += temp; temp })
-    case vars ~ None     => vars.map(v => { val temp = Var(Symbol(v)); dvars += temp; temp })
-  }
-
-  lazy val functions_def = opt("(" ~> ":functions" ~> function_typed_list <~ ")") ^^ {
-    case Some(funcs) => val all = funcs.flatten; dfunctions = all; all
-    case None        => List()
-  }
-
-  lazy val function_typed_list = rep1("(" ~> name ~ rep(typed_list_variable) ~ (":" ~> "return-type" ~> name) <~ ")") ^^ {
-    case lst => lst.map { case fn ~ args ~ retType =>
-      List(Function(fn, args.flatten, retType))
-    }
-  }
-
-  // === TASKS, METHODS, ACTIONS ===
-
-  lazy val structure_def: Parser[List[Any]] = rep1(element)
-  lazy val element = action_def | task_def | method_def
-
-  lazy val task_def = "(" ~> ":task" ~> name ~ opt(parameters_def) <~ ")" ^^ {
-    case name ~ Some(params) => (DomainTask(name, params.flatten), List())
-    case name ~ None         => (DomainTask(name, List()), List())
-  }
-
-  lazy val method_def = "(" ~> ":method" ~> opt(name) ~ opt(parameters_def) ~ task_head ~ opt(pre_def) ~ subtasks ~ opt(ordering_spec) <~ ")" ^^ {
-    case Some(methodName) ~ Some(params) ~ taskInfo ~ preOpt ~ subs ~ _ =>
-      val (taskName, _) = taskInfo
-      val task = DomainTask(taskName, params.flatten)
-      val precond: Expression = preOpt match {
-        case Some(p: Predicate) => ExpressionAtomic(p.name, Bindable(p.arguments))
-        case Some(e: Expression) => e
-        case _ => ExpressionNil()
-      }
-      
-      val subtaskPredicates = subs.map { case (_, name, terms) => Predicate(name, terms) }
-      val taskList = TaskList("sequence", subtaskPredicates)
-      (task.name, List(DomainMethod(methodName, precond, taskList)))
-  }
-
-  lazy val parameters_def = ":parameters" ~> "(" ~> parameters <~ ")"
-  lazy val parameters = rep(typed_list_variable)
-
-  lazy val pre_def = ":precondition" ~> atomic_formula
-
-  lazy val task_head = ":task" ~> "(" ~> name ~ rep(term) <~ ")" ^^ {
-    case tn ~ args => (tn, args)
-  }
-
-  lazy val subtasks = ":subtasks" ~> "(" ~> rep(subtask) <~ ")"
-  lazy val subtask = "(" ~> name ~ name ~ rep(term) <~ ")" ^^ {
-    case id ~ name ~ args => (id, name, args)
-  }
-
-  lazy val ordering_spec = ":ordering" ~> rep("(" ~> name ~ name <~ ")")
-
-
-
-  lazy val action_def = "(" ~> ":action" ~> name ~ parameters_def ~ pre_def ~ effect_def <~ ")" ^^ {
-    case name ~ params ~ pre ~ eff =>
-      val preExpr = pre match {
-        case p: Predicate => ExpressionAtomic(p.name, Bindable(p.arguments))
-        case e: Expression => e
-        case _             => ExpressionNil()
-      }
-      DomainOperator(name, params.flatten, preExpr, eff, List(), List(), 0.0)
-    
-  }
-  
-
-  lazy val effect_def: Parser[List[Effect]] = ":effect" ~> rep(assign_effect)
-
-  lazy val assign_effect: Parser[Effect] = "(" ~> assign_op ~ function_term ~ term <~ ")" ^^ {
-    case op ~ func ~ value => NumericAssignment(op, func, value.asInstanceOf[FunExpression])
-  }
-
-  private def createDomainTypes(base: List[DomainType], derived: List[DomainType]): List[DomainType] = {
-    if (derived.isEmpty) base
-    else {
-      val t = for {
-        t1 <- base
-        t2 <- derived
-        if t1.supertype == t2.name
-      } yield DomainType(t1.name, t2.supertype)
-      createDomainTypes(base ::: t, t)
-    }
-  }
-}
-
-object HDDLDomainParser extends HDDLDomainParser {
-  private def parseStringToObject(input: String) = {
+  // --- Main Entry Point ---
+  def parseDomainStringToObject(input: String): Domain = {
+    validateInput(input)
     info(Messaging.printPlanningSystemMessage + "Processing the domain specification.")
     val scanner = new lexical.Scanner(input)
     phrase(domain)(scanner) match {
-      case Success(result, _) => result
+      case Success(result, _) =>
+        info(Messaging.printPlanningSystemMessage + "The domain specification is correctly processed.")
+        performSemanticChecks(result)
+        checkCustomRequirements(result)
+        printDomainStatistics(result)
+        runCustomHooks(result)
+        result
       case Failure(msg, next) =>
-        error(Messaging.printPlanningSystemMessage + s"Failure at [${next.pos.line}.${next.pos.column}]: $msg")
-        throw new RuntimeException("Domain parsing failed.")
+        error(Messaging.printPlanningSystemMessage + s"Processing failed. Failure at [${next.pos.line}.${next.pos.column}]: $msg")
+        throw new RuntimeException(s"Parse failure at [${next.pos.line}.${next.pos.column}]: $msg")
       case Error(msg, next) =>
-        error(Messaging.printPlanningSystemMessage + s"Error at [${next.pos.line}.${next.pos.column}]: $msg")
-        throw new RuntimeException("Domain parsing failed.")
+        error(Messaging.printPlanningSystemMessage + s"Processing failed. Error at [${next.pos.line}.${next.pos.column}]: $msg")
+        throw new RuntimeException(s"Parse error at [${next.pos.line}.${next.pos.column}]: $msg")
     }
   }
 
-  private def parseFileToObject(file: String) = parseStringToObject(fromFile(file).mkString)
+  def parseDomainFileToObject(filename: String): Domain =
+    parseDomainStringToObject(fromFile(filename).mkString)
 
-  def processDomainFileToObject(file: String): Domain = parseFileToObject(file) match {
-    case d: Domain => d
-    case _ => throw new RuntimeException("Processing failed.")
+  def parseDomainInputStreamToObject(is: InputStream): Domain =
+    parseDomainStringToObject(fromInputStream(is).mkString)
+
+  def checkDomainStringSyntax(input: String): Unit = {
+    info(Messaging.printPlanningSystemMessage + "Checking the domain specification syntax.")
+    val scanner = new lexical.Scanner(input)
+    phrase(domain)(scanner) match {
+      case Success(_, _) =>
+        info(Messaging.printPlanningSystemMessage + "The domain specification is correctly formulated.")
+      case Failure(msg, next) =>
+        error(Messaging.printPlanningSystemMessage + s"Syntax check failed at [${next.pos.line}.${next.pos.column}]: $msg")
+        throw new RuntimeException(s"Syntax check failed at [${next.pos.line}.${next.pos.column}]: $msg")
+      case Error(msg, next) =>
+        error(Messaging.printPlanningSystemMessage + s"Syntax error at [${next.pos.line}.${next.pos.column}]: $msg")
+        throw new RuntimeException(s"Syntax error at [${next.pos.line}.${next.pos.column}]: $msg")
+    }
   }
 
-  def processDomainStringToObject(input: String): Domain = parseStringToObject(input) match {
-    case d: Domain => d
-    case _ => throw new RuntimeException("Processing failed.")
+  def checkDomainFileSyntax(filename: String): Unit =
+    checkDomainStringSyntax(fromFile(filename).mkString)
+
+  // --- Semantic Checks ---
+  private def performSemanticChecks(domain: Domain): Unit = {
+    checkDuplicates(domain.types, "types", (t: DomainType) => t.name)
+    checkDuplicates(domain.predicates, "predicates", (p: Predicate) => p.name)
+    checkDuplicates(domain.functions, "functions", (f: Function) => f.name)
+    checkDuplicates(domain.operators, "actions", (o: Operator) => o._name)
+    checkDuplicates(domain.tasks, "tasks", (t: Task) => t._name)
+    checkTypeHierarchyCycles(domain)
+    checkMethodTaskConsistency(domain)
+    checkTypeReferences(domain)
+    checkPredicateReferences(domain)
   }
 
-  def processDomainInputStreamToObject(is: InputStream): Domain = parseStringToObject(fromInputStream(is).mkString)
+  private def checkDuplicates[T](items: List[T], name: String, extractKey: T => String): Unit = {
+    val duplicates = items.groupBy(extractKey).collect { case (k, vs) if vs.size > 1 => k }
+    if (duplicates.nonEmpty) {
+      val msg = Messaging.printPlanningSystemMessage +
+        s"Duplicate $name detected: ${duplicates.mkString(", ")}"
+      warn(msg)
+      throw new RuntimeException(msg)
+    }
+  }
+
+  private def checkTypeHierarchyCycles(domain: Domain): Unit = {
+    val typeMap = domain.types.map(t => t.name -> t.supertype).toMap
+    def hasCycle(t: String, visited: Set[String]): Boolean =
+      typeMap.get(t) match {
+        case Some(parent) if parent != "object" =>
+          if (visited.contains(parent)) true
+          else hasCycle(parent, visited + parent)
+        case _ => false
+      }
+    domain.types.foreach { t =>
+      if (hasCycle(t.name, Set(t.name)))
+        throw new RuntimeException(s"Type hierarchy cycle detected at type: ${t.name}")
+    }
+  }
+
+  private def checkMethodTaskConsistency(domain: Domain): Unit = {
+    val taskNames = domain.tasks.map(_._name).toSet
+    domain.operators.foreach { op =>
+      if (taskNames.contains(op._name)) {
+        info(s"Action '${op._name}' is also defined as a task.")
+      }
+    }
+    domain.tasks.foreach { t =>
+      val paramVars = t.parameters.collect { case v: Var => v }
+      if (paramVars.exists(v => paramVars.count(_.name == v.name) > 1))
+        warn(Messaging.printPlanningSystemMessage + s"Task '${t._name}' has duplicate parameters.")
+    }
+  }
+
+  private def checkTypeReferences(domain: Domain): Unit = {
+    val typeNames = domain.types.map(_.name).toSet + "object"
+    domain.types.foreach { t =>
+      if (!typeNames.contains(t.supertype))
+        warn(Messaging.printPlanningSystemMessage + s"Type '${t.name}' has unknown supertype '${t.supertype}'.")
+    }
+    domain.predicates.foreach { p =>
+      p.arguments.collect { case v: Var => v }.foreach { v =>
+        if (!typeNames.contains(v._type))
+          warn(Messaging.printPlanningSystemMessage + s"Predicate '${p.name}' has argument with unknown type '${v._type}'.")
+      }
+    }
+  }
+
+  private def checkPredicateReferences(domain: Domain): Unit = {
+    val declaredPreds = domain.predicates.map(_.name).toSet
+    domain.operators.foreach { op =>
+      val usedPreds = extractPredicateNames(op.precondition)
+      usedPreds.filterNot(declaredPreds.contains).foreach { missing =>
+        warn(s"Predicate '$missing' used in action '${op._name}' but not declared.")
+      }
+    }
+  }
+  private def extractPredicateNames(expr: Expression): Set[String] = expr match {
+    case ExpressionAtomic(name, _) => Set(name)
+    case ExpressionAnd(a, b)      => extractPredicateNames(a) ++ extractPredicateNames(b)
+    case ExpressionOr(a, b)       => extractPredicateNames(a) ++ extractPredicateNames(b)
+    case ExpressionNot(e)         => extractPredicateNames(e)
+    case _                        => Set()
+  }
+
+  // --- Custom Requirements/Features ---
+  def checkCustomRequirements(domain: Domain): Unit = {
+    val customReqs = domain.requirements.filter(r => r.startsWith(":my-custom-"))
+    if (customReqs.nonEmpty) {
+      info(s"Custom requirements found: ${customReqs.mkString(", ")}")
+      // Implement your logic for custom requirements here
+    }
+  }
+
+  // --- Domain Statistics ---
+  def printDomainStatistics(domain: Domain): Unit = {
+    println(s"Domain '${domain.name}':")
+    println(s"  Requirements: ${domain.requirements.mkString(", ")}")
+    println(s"  Types: ${domain.types.size}")
+    println(s"  Predicates: ${domain.predicates.size}")
+    println(s"  Functions: ${domain.functions.size}")
+    println(s"  Actions: ${domain.operators.size}")
+    println(s"  Tasks: ${domain.tasks.size}")
+    println(s"  Axioms: ${domain.axioms.size}")
+    // Add more as needed
+  }
+
+  // --- Visualization/Export Example ---
+  def exportTypeHierarchyToDOT(domain: Domain, filename: String): Unit = {
+    val lines = mutable.Buffer("digraph Types {")
+    domain.types.foreach { t =>
+      if (t.supertype != "object")
+        lines += s"""  "${t.supertype}" -> "${t.name}";"""
+    }
+    lines += "}"
+    import java.nio.file._
+    Files.write(Paths.get(filename), lines.mkString("\n").getBytes)
+  }
+
+  // --- Add more extension methods below as needed ---
 }

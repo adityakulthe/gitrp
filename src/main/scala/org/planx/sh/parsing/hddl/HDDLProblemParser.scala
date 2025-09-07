@@ -1,98 +1,155 @@
 package org.planx.sh.parsing.hddl
 
-import grizzled.slf4j.Logging
-import org.planx.sh
 import org.planx.sh.problem._
-import org.planx.sh.solving.State
-import org.planx.sh.utility.{DomainRequirements, Messaging}
+import org.planx.sh.solving._
+import scala.util.parsing.combinator.syntactical.StdTokenParsers
 
-import scala.collection.mutable.ListBuffer
-import scala.io.Source._
+trait HDDLProblemParser extends StdTokenParsers {
+  type Tokens = HDDLTokens
+  val lexical = new HDDLLexer
 
-class HDDLProblemParser extends HDDLParser with Logging {
+  // Entry point
+  def parseProblem(input: String): ParseResult[Problem] =
+    phrase(problem)(new lexical.Scanner(input))
 
-  domain_parser_on = false
-  dvars = new ListBuffer[Var]()
+  // Problem grammar
+  lazy val problem: Parser[Problem] =
+    "(" ~> "define" ~> problemBody <~ rep(")")
 
-  lazy val problem = "(" ~> "define" ~> problem_name ~ domain_name ~ require_def ~ objects_dec ~ init ~ goal_tasks <~ ")" ^^ {
-    case pn ~ dn ~ reqs ~ objs ~ initState ~ goalTasks =>
-      // Populate initial facts
-      for (o <- objs.objects) initState.add(o._type, Array(Constant(o._value)))
-      sh.problem.Problem(pn, dn, reqs, objs, initState, goalTasks)
-  }
+  lazy val problemBody: Parser[Problem] =
+    ("(" ~> "problem" ~> name <~ ")") ~
+      ("(" ~> ":domain" ~> name <~ ")") ~
+      opt(objects) ~
+      init ~
+      opt(goal) ~
+      opt(htn) <~ ")" ^^ {
+        case probName ~ domainName ~ objectsOpt ~ initLits ~ goalOpt ~ htnOpt =>
+          Problem(
+            name = probName,
+            domain = domainName,
+            objects = objectsOpt.getOrElse(Nil),
+            init = initLits,
+            goal = goalOpt.getOrElse(ExpressionAtomic("true", new Bindable(Nil))),
+            htn = htnOpt
+          )
+      }
 
-  lazy val problem_name = "(" ~> "problem" ~> name <~ ")"
-  lazy val domain_name = "(" ~> ":domain" ~> name <~ ")"
 
-  lazy val objects_dec = opt(objects_def_helper) ^^ {
-    case Some(objHelper) => Objects(objHelper.flatten)
-    case None => Objects()
-  }
 
-  lazy val objects_def_helper = "(" ~> ":objects" ~> rep(objects_list) <~ ")"
-  lazy val objects_list = rep1(name) ~ opt(supertype) ^^ {
-    case names ~ Some(st) => names.map(n => ProblemObject(st, n))
-    case names ~ None => names.map(n => ProblemObject(DomainRequirements.OBJECT, n))
-  }
 
-  lazy val init: Parser[State] = "(" ~> ":init" ~> rep(init_elements) <~ ")" ^^ {
-    case facts =>
-      val state = new State
-      facts.foreach { pred => state.add(pred.name, pred.arguments.toArray) }
-      state
-  }
 
-  lazy val init_elements: Parser[Predicate] = simple_predicate | proper_predicate | init_fluent
+  // Objects (typed or untyped)
+  lazy val objects: Parser[List[TypedObject]] =
+    "(" ~> ":objects" ~> rep1(typedObject) <~ ")"
 
-  lazy val init_fluent = "(" ~> "=" ~> basic_function_term ~ fluent_value <~ ")" ^^ {
-    case (fnName, args) ~ value =>
-      val allArgs = args :+ value
-      Predicate(fnName, allArgs)
-  }
-
-  lazy val basic_function_term: Parser[(String, List[Term])] =
-    function_symbol ^^ { fn => (fn, List()) } |
-    "(" ~> function_symbol ~ rep(name) <~ ")" ^^ {
-      case fn ~ args => (fn, args.map(Constant))
+  lazy val typedObject: Parser[TypedObject] =
+    name ~ opt("-" ~> name) ^^ {
+      case n ~ Some(tpe) => TypedObject(n, tpe)
+      case n ~ None      => TypedObject(n, "object")
     }
 
-  lazy val fluent_value: Parser[Term] = number ^^ { n => Number(n.toDouble) } | name ^^ { Constant(_) }
+  // Init
+  lazy val init: Parser[List[InitLiteral]] =
+    "(" ~> ":init" ~> rep(initLiteral) <~ ")"
 
-  lazy val goal_tasks = "(" ~> ":goal-tasks" ~> task_list <~ ")"
+  lazy val initLiteral: Parser[InitLiteral] =
+    // Numeric assignment or predicate
+    ("(" ~> "=" ~> funExpression ~ number <~ ")" ^^ { case f ~ n => InitAssign(f, n.toDouble) }) |
+    ("(" ~> name ~ rep(term) <~ ")" ^^ { case n ~ ts => InitPredicate(n, ts) })
+
+  // Goal
+  lazy val goal: Parser[Expression] =
+    "(" ~> ":goal" ~> formula <~ ")"
+
+  // HTN/Tasks (optional, for HDDL)
+  lazy val htn: Parser[HTN] =
+    (("(" ~> (":htn" | ":tasks") ~> taskNetwork <~ ")") | (":htn" ~> taskNetwork))
+
+  lazy val taskNetwork: Parser[HTN] =
+    (":subtasks" ~> "(" ~> name ~ rep(term) <~ ")" ^^ { case n ~ ts => HTN(n, ts) }
+    | "(" ~> name ~ rep(term) <~ ")" ^^ { case n ~ ts => HTN(n, ts) })
+
+
+  // Formula (reuse from domain parser)
+  lazy val formula: Parser[Expression] =
+    ("(" ~> "and" ~> rep1(formula) <~ ")" ^^ { exprs => exprs.reduceLeft(ExpressionAnd) }
+      | "(" ~> "or" ~> rep1(formula) <~ ")" ^^ { exprs => exprs.reduceLeft(ExpressionOr) }
+      | "(" ~> "not" ~> formula <~ ")" ^^ { expr => ExpressionNot(expr) }
+      | "(" ~> "imply" ~> formula ~ formula <~ ")" ^^ { case a ~ b => ExpressionImply(a, b) }
+      | "(" ~> "forall" ~> (("(" ~> rep(variableWithOptionalType) <~ ")") ~ formula) <~ ")" ^^ {
+          case vars ~ f =>
+            ExpressionForall(
+              vars.map {
+                case (v, Some(tpe)) => Var(Symbol(v), tpe)
+                case (v, None)      => Var(Symbol(v), "object")
+              },
+              ExpressionNil(),
+              f
+            )
+        }
+      | "(" ~> "when" ~> formula ~ formula <~ ")" ^^ { case cond ~ eff => ConditionalEffect(cond, eff) }
+      | atomicFormula
+    )
+
+  lazy val atomicFormula: Parser[Expression] =
+    simplePredicate | properPredicate | equalityPredicate | numericPredicate
+
+  lazy val simplePredicate: Parser[Expression] =
+    "(" ~> name <~ ")" ^^ { pn => ExpressionAtomic(pn, new Bindable(Nil)) }
+
+  lazy val properPredicate: Parser[Expression] =
+    "(" ~> name ~ rep(term) <~ ")" ^^ { case pn ~ ts => ExpressionAtomic(pn, new Bindable(ts)) }
+
+  lazy val equalityPredicate: Parser[Expression] =
+    "(" ~> "=" ~> funExpression ~ funExpression <~ ")" ^^ { case t1 ~ t2 =>
+      ExpressionComparison(Comparison("=", List(t1, t2)))
+    }
+
+  // Numeric predicates
+  lazy val numericPredicate: Parser[Expression] =
+    "(" ~> numericOp ~ funExpression ~ funExpression <~ ")" ^^ {
+      case op ~ t1 ~ t2 => ExpressionComparison(Comparison(op, List(t1, t2)))
+    }
+  lazy val numericOp: Parser[String] = "<=" | "<" | ">=" | ">" | "="
+
+  // Terms
+  lazy val terms: Parser[List[Term]] = rep1(term)
+  lazy val term: Parser[Term] =
+    (name ^^ Constant.apply
+      | variable ^^ (v => Var(Symbol(v)))
+      | number ^^ (n => Number(n.toDouble))
+    )
+
+  // FunExpression for equality and numeric expressions
+  lazy val funExpression: Parser[FunExpression] =
+    (name ^^ Constant.apply
+      | variable ^^ (v => Var(Symbol(v)))
+      | number ^^ (n => Number(n.toDouble))
+    )
+
+  // Variables with optional types (reuse from domain parser)
+  lazy val variableWithOptionalType: Parser[(String, Option[String])] =
+    (variable ~ opt("-" ~> name)) ^^ { case v ~ t => (v, t) }
+
+  // Tokens
+  lazy val name: Parser[String] = accept("name", { case lexical.IdLit(s) => s.toLowerCase })
+  lazy val variable: Parser[String] = accept("variable", { case lexical.VarIdLit(s) => s.toLowerCase.substring(1) })
+  lazy val number: Parser[String] = accept("real", { case lexical.FloatLit(s) => s.toLowerCase }) | accept("int", { case lexical.IntLit(s) => s.toLowerCase })
 }
 
-object HDDLProblemParser extends HDDLProblemParser {
+// --- Data classes for Problem ---
 
-  private def parseStringToObject(input: String): Problem = {
-    info(Messaging.printPlanningSystemMessage + "Processing the problem specification.")
-    val scanner = new lexical.Scanner(input)
-    phrase(problem)(scanner) match {
-      case Success(result, _) =>
-        info(Messaging.printPlanningSystemMessage + "The problem specification is correctly processed.")
-        result
-      case Failure(msg, next) =>
-        error(Messaging.printPlanningSystemMessage + s"Failure at [${next.pos.line}.${next.pos.column}] - $msg")
-        throw new RuntimeException("Parsing failed.")
-      case Error(msg, next) =>
-        error(Messaging.printPlanningSystemMessage + s"Error at [${next.pos.line}.${next.pos.column}] - $msg")
-        throw new RuntimeException("Parsing failed.")
-    }
-  }
+case class Problem(
+  name: String,
+  domain: String,
+  objects: List[TypedObject],
+  init: List[InitLiteral],
+  goal: Expression,
+  htn: Option[HTN]
+)
 
-  private def parseFileToObject(file: String): Problem = parseStringToObject(fromFile(file).mkString)
-
-  def processProblemFileToObject(file: String): Problem = parseFileToObject(file)
-
-  def processProblemStringToObject(problemString: String): Problem = parseStringToObject(problemString)
-
-  def checkProblemStringSyntax(input: String): Unit = {
-    info(Messaging.printPlanningSystemMessage + "Validating problem syntax...")
-    phrase(problem)(new lexical.Scanner(input)) match {
-      case Success(_, _) => info(Messaging.printPlanningSystemMessage + "The problem specification is correctly formulated.")
-      case Failure(msg, next) => error(Messaging.printPlanningSystemMessage + s"Failure at [${next.pos.line}.${next.pos.column}] - $msg")
-      case Error(msg, next) => error(Messaging.printPlanningSystemMessage + s"Error at [${next.pos.line}.${next.pos.column}] - $msg")
-    }
-  }
-
-  def checkProblemFileSyntax(file: String): Unit = checkProblemStringSyntax(fromFile(file).mkString)
-}
+case class TypedObject(name: String, tpe: String)
+sealed trait InitLiteral
+case class InitPredicate(name: String, terms: List[Term]) extends InitLiteral
+case class InitAssign(f: FunExpression, value: Double) extends InitLiteral
+case class HTN(name: String, args: List[Term])

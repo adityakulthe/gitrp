@@ -2,90 +2,293 @@ package org.planx.sh.parsing.hddl
 
 import org.planx.sh.problem._
 import org.planx.sh.solving._
-import scala.collection.mutable.ListBuffer
-import scala.util.parsing.combinator.ImplicitConversions
+import scala.util.parsing.combinator._
 import scala.util.parsing.combinator.syntactical.StdTokenParsers
 
-trait HDDLParser extends StdTokenParsers with ImplicitConversions with ExpressionConversions {
+trait HDDLParser extends StdTokenParsers {
   type Tokens = HDDLTokens
   val lexical = new HDDLLexer
-  protected var domain_parser_on = false
-  protected var domain_requirements = List[String]()
-  protected var problem_requirements = List[String]()
-  var dpredicates: List[Predicate] = List()
-  var dfunctions: List[Function] = List()
-  var dvars = new ListBuffer[Var]()
+
+  // --- Section ADT for flexible parsing ---
+  sealed trait Section
+  case class Requirements(reqs: List[String]) extends Section
+  case class Types(types: List[DomainType]) extends Section
+  case class Predicates(preds: List[Predicate]) extends Section
+  case class Functions(funcs: List[Function]) extends Section
+  case class Tasks(tasks: List[DomainTask]) extends Section
+  case class Action(act: DomainOperator) extends Section
+  case class Method(meth: DomainMethod) extends Section
+  case class Derived(ax: Axiom) extends Section
+
+  // --- Entry point ---
+  def parseDomain(input: String): ParseResult[Domain] =
+    phrase(domain)(new lexical.Scanner(input))
+
+  // --- Grammar ---
+
+  lazy val domain: Parser[Domain] =
+    "(" ~> "define" ~> domainBody <~ rep(")")
+
+  lazy val domainBody: Parser[Domain] =
+    rep(section) <~ ")" ^^ { sections =>
+      val domName = sections.collectFirst { case Left(n) => n }.getOrElse("noname")
+      val reqs    = sections.collectFirst { case Right(Requirements(r)) => r }.getOrElse(Nil)
+      val types   = sections.collectFirst { case Right(Types(t)) => t }.getOrElse(Nil)
+      val preds   = sections.collectFirst { case Right(Predicates(p)) => p }.getOrElse(Nil)
+      val funcs   = sections.collectFirst { case Right(Functions(f)) => f }.getOrElse(Nil)
+      val tasks   = sections.collectFirst { case Right(Tasks(t)) => t }.getOrElse(Nil)
+      val ops     = sections.collect { case Right(Action(a)) => a }
+      val meths   = sections.collect { case Right(Method(m)) => m }
+      val axioms  = sections.collect { case Right(Derived(a)) => a }
+      val pairedTasks = tasks.map(t => (t, meths.filter(_.name == t.name)))
+      Domain(domName, reqs, types, preds, funcs, ops, pairedTasks, axioms)
+    }
+
+  lazy val section: Parser[Either[String, Section]] =
+    ("(" ~> "domain" ~> name <~ ")") ^^ (Left(_)) |
+    requirements ^^ (r => Right(Requirements(r))) |
+    types ^^ (t => Right(Types(t))) |
+    predicates ^^ (p => Right(Predicates(p))) |
+    functions ^^ (f => Right(Functions(f))) |
+    tasks ^^ (t => Right(Tasks(t))) |
+    singleTask ^^ (t => Right(Tasks(List(t)))) | // <-- Add this line!
+    derived ^^ (a => Right(Derived(a))) |  
+    action ^^ (a => Right(Action(a))) |
+    method ^^ (m => Right(Method(m)))
+
+      
 
   // --- Requirements ---
-  lazy val require_def = "(" ~> ":requirements" ~> rep(require_key) <~ ")"
-  lazy val require_key = (":strips" ^^ { _ => "S" }
-    | ":typing" ^^ { _ => "T" }
-    | ":htn" ^^ { _ => "HTN" })
+  lazy val requirements: Parser[List[String]] =
+    "(" ~> ":requirements" ~> rep(requireKey) <~ ")"
+  lazy val requireKey: Parser[String] =
+    (":strips" | ":typing" | ":negative-preconditions" | ":hierarchy" | ":method-preconditions" | ":equality" | ":universal-preconditions" | ":numeric-fluents" | ":derived-predicates")
 
   // --- Types ---
-  lazy val supertype = "-" ~> name
+  lazy val types: Parser[List[DomainType]] =
+    "(" ~> ":types" ~> rep1(name ~ opt("-" ~> name)) <~ ")" ^^ {
+      _.map {
+        case t ~ Some(supertype) => DomainType(t, supertype)
+        case t ~ None           => DomainType(t, "object")
+      }
+    }
 
-  // --- Task Lists ---
-  lazy val task_list: Parser[TaskList] =
-    "(" ~> ordering ~ rep(tl) <~ ")" ^^ { case o ~ ta => TaskList(o, ta) } |
-    "(" ~> ")" ^^ { _ => TaskList("sequence", List()) }
+  // --- Variables with optional types ---
+  lazy val variableWithOptionalType: Parser[(String, Option[String])] =
+    (variable ~ opt("-" ~> name)) ^^ { case v ~ t => (v, t) }
 
-  lazy val ordering = "sequence" | "unordered"
+  // --- Predicates ---
+  lazy val predicates: Parser[List[Predicate]] =
+    "(" ~> ":predicates" ~> rep(predicateSignature) <~ ")"
+  lazy val predicateSignature: Parser[Predicate] =
+    "(" ~> name ~ rep(variableWithOptionalType) <~ ")" ^^ {
+      case n ~ vars =>
+        Predicate(n, vars.map {
+          case (v, Some(tpe)) => Var(Symbol(v), tpe)
+          case (v, None)      => Var(Symbol(v), "object")
+        })
+    }
 
-  lazy val task_atom = "(" ~> name ~ terms <~ ")" ^^ { case n ~ t => Predicate(n, t) }
-  lazy val simple_task_atom = "(" ~> name <~ ")" ^^ { case n => Predicate(n) }
-  lazy val tl = simple_task_atom | task_atom | task_list
+  // --- Functions (numeric fluents) ---
+  lazy val functions: Parser[List[Function]] =
+    "(" ~> ":functions" ~> rep(functionSignature) <~ ")" ^^ (_.toList)
+  lazy val functionSignature: Parser[Function] =
+    "(" ~> name ~ rep(variableWithOptionalType) <~ ")" ^^ {
+      case n ~ vars =>
+        Function(n, vars.map {
+          case (v, Some(tpe)) => Var(Symbol(v), tpe)
+          case (v, None)      => Var(Symbol(v), "object")
+        })
+    }
+  // --- Single Task (non-standard, for compatibility) ---
+  lazy val singleTask: Parser[DomainTask] =
+    "(" ~> ":task" ~> name ~ opt(":parameters" ~> "(" ~> rep(variableWithOptionalType) <~ ")") <~ ")" ^^ {
+      case n ~ varsOpt =>
+        DomainTask(n, varsOpt.getOrElse(Nil).map {
+          case (v, Some(tpe)) => Var(Symbol(v), tpe)
+          case (v, None)      => Var(Symbol(v), "object")
+        })
+    }
 
-  // --- Expressions ---
-  lazy val predicate_name = name
+  // --- Tasks ---
+  lazy val tasks: Parser[List[DomainTask]] =
+    "(" ~> ":tasks" ~> rep(taskSignature) <~ ")"
+  lazy val taskSignature: Parser[DomainTask] =
+    "(" ~> name ~ rep(variableWithOptionalType) <~ ")" ^^ {
+      case n ~ vars =>
+        DomainTask(n, vars.map {
+          case (v, Some(tpe)) => Var(Symbol(v), tpe)
+          case (v, None)      => Var(Symbol(v), "object")
+        })
+    }
 
-  lazy val atomic_formula = simple_predicate | proper_predicate | equality_predicate
-  lazy val simple_predicate = "(" ~> predicate_name <~ ")" ^^ { pn => Predicate(pn) }
-  lazy val proper_predicate = "(" ~> predicate_name ~ terms <~ ")" ^^ { case pn ~ t => Predicate(pn, t) }
+  // --- Elements (actions, methods, axioms/derived) ---
+  lazy val element: Parser[Any] = action | method | derived
 
-  lazy val equality_predicate = "(" ~> "=" ~> term ~ term <~ ")" ^^ {
-    case t1 ~ t2 => ExpressionComparison(Comparison("=", List(TermWrapper(t1), TermWrapper(t2))))
-
+  // --- Actions ---
+  lazy val action: Parser[DomainOperator] =
+    "(" ~> ":action" ~> name ~
+      opt(parameters) ~
+      opt(actionPrecondition) ~
+      opt(actionEffect) <~ ")" ^^ {
+    case n ~ paramsOpt ~ precondOpt ~ effectOpt =>
+      val (addEffs, delEffs, assignEffs) = effectOpt.map(parseEffects).getOrElse((List(), List(), List()))
+      DomainOperator(
+        n,
+        paramsOpt.getOrElse(Nil),
+        precondOpt.getOrElse(ExpressionAtomic("true", new Bindable(Nil))),
+        addEffs,
+        delEffs,
+        assignEffs,
+        0.0
+      )
   }
+
+  // --- Parse effect expressions into add, delete, assignment ---
+  private def parseEffects(expr: Expression): (List[Effect], List[Effect], List[Assignment]) = {
+    def loop(e: Expression, add: List[Effect], del: List[Effect], assign: List[Assignment]): (List[Effect], List[Effect], List[Assignment]) = e match {
+      case ExpressionAnd(l, r) =>
+        val (addL, delL, assignL) = loop(l, add, del, assign)
+        val (addR, delR, assignR) = loop(r, addL, delL, assignL)
+        (addR, delR, assignR)
+      case ExpressionAtomic(name, blueprint) if name.startsWith("not-") =>
+        (add, Delete(Predicate(name.stripPrefix("not-"), blueprint.arguments)) :: del, assign)
+      case ExpressionAtomic(name, blueprint) =>
+        (Add(Predicate(name, blueprint.arguments)) :: add, del, assign)
+      case ExpressionComparison(comparison) =>
+        (add, del, NumericAssignment(comparison.comparator, comparison.arguments.head, comparison.arguments(1)) :: assign)
+      case ConditionalEffect(cond, eff) =>
+        (add, del, assign) // Extend if you want to collect conditional effects
+      case _ => (add, del, assign)
+    }
+    loop(expr, List(), List(), List())
+  }
+
+  lazy val actionPrecondition: Parser[Expression] =
+    ":precondition" ~> formula
+
+  lazy val actionEffect: Parser[Expression] =
+    ":effect" ~> formula
+
+  // --- Methods ---
+  lazy val method: Parser[DomainMethod] =
+    "(" ~> ":method" ~> name ~
+      opt(parameters) ~
+      opt(methodTask) ~
+      opt(methodPrecondition) ~
+      subtasks <~ ")" ^^ {
+    case n ~ _paramsOpt ~ _taskOpt ~ precondOpt ~ subtasks =>
+      val precond = precondOpt.getOrElse(ExpressionAtomic("true", new Bindable(Nil)))
+      DomainMethod(n, precond, subtasks)
+  }
+
+  // --- Parameters ---
+  lazy val parameters: Parser[List[Var]] =
+    ":parameters" ~> "(" ~> rep(variableWithOptionalType) <~ ")" ^^ {
+      _.map {
+        case (v, Some(tpe)) => Var(Symbol(v), tpe)
+        case (v, None)      => Var(Symbol(v), "object")
+      }
+    }
+
+  // --- Method task (optional) ---
+  lazy val methodTask: Parser[Predicate] =
+    ":task" ~> "(" ~> name ~ rep(term) <~ ")" ^^ { case n ~ ts => Predicate(n, ts) }
+
+  // --- Method precondition ---
+  lazy val methodPrecondition: Parser[Expression] =
+    ":precondition" ~> formula
+
+  // --- Subtasks (partial ordering supported) ---
+  lazy val subtasks: Parser[TaskList] =
+    (":ordered-subtasks" ~> subtasksList ^^ { ts => TaskList("sequence", ts) }
+      | ":unordered-subtasks" ~> subtasksList ^^ { ts => TaskList("unordered", ts) }
+      | ":subtasks" ~> subtasksList ^^ { ts => TaskList("unordered", ts) })
+
+  lazy val subtasksList: Parser[List[Predicate]] =
+    // Accept either (and (task1) (task2)) or just a list of tasks
+    ("(" ~> "and" ~> rep1(taskAtom) <~ ")") | rep1(taskAtom)
+
+
+  // --- Task atom ---
+  lazy val taskAtom: Parser[Predicate] =
+    "(" ~> name ~ rep(term) <~ ")" ^^ { case n ~ ts => Predicate(n, ts) }
+
+  // --- Derived predicates / axioms ---
+  lazy val derived: Parser[Axiom] =
+    "(" ~> ":derived" ~> name ~ ("(" ~> rep(variableWithOptionalType) <~ ")") ~ formula <~ ")" ^^ {
+      case n ~ vars ~ f =>
+        new Axiom(n, Bindable(vars.map {
+          case (v, Some(tpe)) => Var(Symbol(v), tpe)
+          case (v, None)      => Var(Symbol(v), "object")
+        })) { test(f) }
+    }
+  
+
+  // --- Formula parsing (with universal quantification and conditional effects) ---
+  lazy val formula: Parser[Expression] =
+    ("(" ~> "and" ~> rep1(formula) <~ ")" ^^ { exprs => exprs.reduceLeft(ExpressionAnd) }
+      | "(" ~> "or" ~> rep1(formula) <~ ")" ^^ { exprs => exprs.reduceLeft(ExpressionOr) }
+      | "(" ~> "not" ~> formula <~ ")" ^^ { expr => ExpressionNot(expr) }
+      | "(" ~> "imply" ~> formula ~ formula <~ ")" ^^ { case a ~ b => ExpressionImply(a, b) }
+      | "(" ~> "forall" ~> (("(" ~> rep(variableWithOptionalType) <~ ")") ~ formula) <~ ")" ^^ {
+          case vars ~ f =>
+            ExpressionForall(
+              vars.map {
+                case (v, Some(tpe)) => Var(Symbol(v), tpe)
+                case (v, None)      => Var(Symbol(v), "object")
+              },
+              ExpressionNil(),
+              f
+            )
+        }
+      | "(" ~> "when" ~> formula ~ formula <~ ")" ^^ { case cond ~ eff => ConditionalEffect(cond, eff) }
+      | atomicFormula
+    )
+
+  lazy val atomicFormula: Parser[Expression] =
+    simplePredicate | properPredicate | equalityPredicate | numericPredicate
+
+  lazy val simplePredicate: Parser[Expression] =
+    "(" ~> name <~ ")" ^^ { pn => ExpressionAtomic(pn, new Bindable(Nil)) }
+
+  lazy val properPredicate: Parser[Expression] =
+    "(" ~> name ~ rep(term) <~ ")" ^^ { case pn ~ ts => ExpressionAtomic(pn, new Bindable(ts)) }
+
+  lazy val equalityPredicate: Parser[Expression] =
+    "(" ~> "=" ~> funExpression ~ funExpression <~ ")" ^^ { case t1 ~ t2 =>
+      ExpressionComparison(Comparison("=", List(t1, t2)))
+    }
+
+  // --- Numeric predicates ---
+  lazy val numericPredicate: Parser[Expression] =
+    "(" ~> numericOp ~ funExpression ~ funExpression <~ ")" ^^ {
+      case op ~ t1 ~ t2 => ExpressionComparison(Comparison(op, List(t1, t2)))
+    }
+  lazy val numericOp: Parser[String] = "<=" | "<" | ">=" | ">" | "="
 
   // --- Terms ---
   lazy val terms: Parser[List[Term]] = rep1(term)
-
   lazy val term: Parser[Term] =
-    name ^^ { c => Constant(c) } |
-    variable ^^ { v =>
-      dvars.find(_.name == Symbol(v)).getOrElse(Var(Symbol(v)))
-    } |
-    number ^^ { n => Number(n.toDouble) } |
-    f_exp_f_head
+    (name ^^ Constant.apply
+      | variable ^^ (v => Var(Symbol(v)))
+      | number ^^ (n => Number(n.toDouble))
+    )
 
-  // --- Functions ---
-  lazy val function_term = "(" ~> function_symbol ~ terms <~ ")" ^^ {
-    case fs ~ t => Function(fs, t)
-  }
+  // --- FunExpression for equality and numeric expressions ---
+  lazy val funExpression: Parser[FunExpression] =
+    (name ^^ Constant.apply
+      | variable ^^ (v => Var(Symbol(v)))
+      | number ^^ (n => Number(n.toDouble))
+    )
 
-  lazy val f_exp_f_head = "(" ~> function_symbol ~ opt(terms) <~ ")" ^^ {
-    case fs ~ Some(t) =>
-      val f = dfunctions.find(df => df.name == fs && df.args.size == t.size).getOrElse(
-        throw new RuntimeException(s"Function $fs with ${t.size} args not declared")
-      )
-      val typeExpr = f.args.zip(t).collect {
-        case (a: Var, tm) => a._type -> tm
-      }
-      Function(fs, t, f.returnType, typeExpr)
-    case fs ~ None =>
-      val f = dfunctions.find(df => df.name == fs && df.args.isEmpty).getOrElse(
-        throw new RuntimeException(s"Function $fs with 0 args not declared")
-      )
-      Function(fs, Nil, f.returnType)
-  }
+  // --- Tokens ---
+  lazy val name: Parser[String] = accept("name", { case lexical.IdLit(s) => s.toLowerCase })
+  lazy val variable: Parser[String] = accept("variable", { case lexical.VarIdLit(s) => s.toLowerCase.substring(1) })
+  lazy val number: Parser[String] = accept("real", { case lexical.FloatLit(s) => s.toLowerCase }) | accept("int", { case lexical.IntLit(s) => s.toLowerCase })
+}
 
-  lazy val function_symbol = name
-  lazy val assign_op = "assign" | "scale-up" | "scale-down" | "increase" | "decrease"
-
-  // --- Lexical Units ---
-  lazy val name = accept("name", { case lexical.IdLit(s) => s.toLowerCase })
-  lazy val variable = accept("string", { case lexical.VarIdLit(s) => s.toLowerCase.substring(1) })
-  lazy val number = accept("real", { case lexical.FloatLit(s) => s.toLowerCase }) |
-                    accept("int", { case lexical.IntLit(s) => s.toLowerCase })
+// --- Helper class for conditional effects (extend as needed) ---
+case class ConditionalEffect(condition: Expression, effect: Expression) extends Expression {
+  def getBindings(state: State, binding: Binding) = effect.getBindings(state, binding)
 }
